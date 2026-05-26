@@ -2198,8 +2198,8 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
       }
     } catch (e) {}
 
-    const deletePolicy = this.getSnapshotDeletePolicy();
-    const holdPolicy = this.getSnapshotHoldPolicy();
+    const snapshotDeletePolicy = this.getSnapshotDeletePolicy();
+    const snapshotHoldPolicy = this.getSnapshotHoldPolicy();
 
     let response;
     const volumeParentDatasetName = this.getVolumeParentDatasetName();
@@ -2263,8 +2263,8 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
     snapshotProperties[SNAPSHOT_CSI_SOURCE_VOLUME_ID_PROPERTY_NAME] =
       source_volume_id;
     snapshotProperties[MANAGED_PROPERTY_NAME] = "true";
-    snapshotProperties[SNAPSHOT_DELETE_POLICY_PROPERTY_NAME] = deletePolicy; // The delete policy should be independent of the snapshot
-    snapshotProperties[SNAPSHOT_HOLD_POLICY_PROPERTY_NAME] = holdPolicy;
+    snapshotProperties[SNAPSHOT_DELETE_POLICY_PROPERTY_NAME] = snapshotDeletePolicy; // The delete policy should be independent of the snapshot
+    snapshotProperties[SNAPSHOT_HOLD_POLICY_PROPERTY_NAME] = snapshotHoldPolicy;
 
     driver.ctx.logger.verbose("requested snapshot name: %s", name);
 
@@ -2474,12 +2474,12 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
     await zb.zfs.set(fullSnapshotName, { [SUCCESS_PROPERTY_NAME]: "true" });
 
     // hold snapshot if configured to do so
-    if (!detachedSnapshot && holdPolicy.toLowerCase() === "hold") {
+    if (!detachedSnapshot && snapshotHoldPolicy.toLowerCase() === "hold") {
       driver.ctx.logger.verbose(
-        "holding snapshot: %s (deletePolicy: %s, holdPolicy: %s)",
+        "holding snapshot: %s (snapshotDeletePolicy: %s, snapshotHoldPolicy: %s)",
         fullSnapshotName,
-        deletePolicy,
-        holdPolicy
+        snapshotDeletePolicy,
+        snapshotHoldPolicy
       );
       try {
         await zb.zfs.hold(fullSnapshotName, "csi-hold", { recurse: false });
@@ -2561,9 +2561,9 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
     driver.ctx.logger.verbose("deleting snapshot: %s", fullSnapshotName);
 
     if (!detachedSnapshot) {
-      const deletePolicy = this.getSnapshotDeletePolicy();
+      const snapshotDeletePolicy = this.getSnapshotDeletePolicy();
       // Query the hold policy from the snapshot properties
-      let holdPolicy = this.getSnapshotHoldPolicy();
+      let snapshotHoldPolicy = this.getSnapshotHoldPolicy();
       try {
         let properties = await zb.zfs.get(fullSnapshotName, [
           //SNAPSHOT_DELETE_POLICY_PROPERTY_NAME, // The delete policy should be independent of the snapshot
@@ -2572,7 +2572,7 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
         if (properties && properties[fullSnapshotName][SNAPSHOT_HOLD_POLICY_PROPERTY_NAME]) {
           let holdValue = properties[fullSnapshotName][SNAPSHOT_HOLD_POLICY_PROPERTY_NAME];
           if (holdValue && ["hold", "nohold"].includes(holdValue.value.toLowerCase())) {
-            holdPolicy = holdValue.value;
+            snapshotHoldPolicy = holdValue.value;
           }
         }
       } catch (err) {
@@ -2580,30 +2580,30 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
         driver.ctx.logger.debug(
           "unable to query snapshot policies for %s, using defaults: delete=%s hold=%s",
           fullSnapshotName,
-          deletePolicy,
-          holdPolicy
+          snapshotDeletePolicy,
+          snapshotHoldPolicy
         );
       }
 
       driver.ctx.logger.verbose(
         "snapshot delete policy for %s: %s",
         fullSnapshotName,
-        deletePolicy
+        snapshotDeletePolicy
       );
       driver.ctx.logger.verbose(
         "snapshot hold policy for %s: %s",
         fullSnapshotName,
-        holdPolicy
+        snapshotHoldPolicy
       );
 
       try {
         // release the snapshot first if it is held and we plan to delete or release it
-        if (holdPolicy.toLowerCase() === "hold" && ["delete", "release"].includes(deletePolicy.toLowerCase())) {
+        if (snapshotHoldPolicy.toLowerCase() === "hold" && ["delete", "release"].includes(snapshotDeletePolicy.toLowerCase())) {
           driver.ctx.logger.verbose(
-            "releasing snapshot: %s (deletePolicy: %s, holdPolicy: %s)",
+            "releasing snapshot: %s (snapshotDeletePolicy: %s, snapshotHoldPolicy: %s)",
             fullSnapshotName,
-            deletePolicy,
-            holdPolicy
+            snapshotDeletePolicy,
+            snapshotHoldPolicy
           );
           try {
             await zb.zfs.release(fullSnapshotName, "csi-hold", { recurse: false });
@@ -2618,12 +2618,12 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
         }
 
         // destroy the snapshot if policy requires it
-        if (deletePolicy.toLowerCase() === "delete") {
+        if (snapshotDeletePolicy.toLowerCase() === "delete") {
           driver.ctx.logger.verbose(
-            "destroying snapshot: %s (deletePolicy: %s, holdPolicy: %s)",
+            "destroying snapshot: %s (snapshotDeletePolicy: %s, snapshotHoldPolicy: %s)",
             fullSnapshotName,
-            deletePolicy,
-            holdPolicy
+            snapshotDeletePolicy,
+            snapshotHoldPolicy
           );
           await zb.zfs.destroy(fullSnapshotName, {
             recurse: true,
@@ -2633,7 +2633,7 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
         } else {
           driver.ctx.logger.verbose(
             "snapshot deletion skipped due to policy: %s (snapshot: %s)",
-            deletePolicy,
+            snapshotDeletePolicy,
             fullSnapshotName
           );
         }

@@ -4443,8 +4443,8 @@ class FreeNASApiDriver extends CsiBaseDriver {
       }
     } catch (e) {}
 
-    const deletePolicy = this.getSnapshotDeletePolicy();
-    const holdPolicy = this.getSnapshotHoldPolicy();
+    const snapshotDeletePolicy = this.getSnapshotDeletePolicy();
+    const snapshotHoldPolicy = this.getSnapshotHoldPolicy();
 
     let response;
     const volumeParentDatasetName = this.getVolumeParentDatasetName();
@@ -4507,8 +4507,8 @@ class FreeNASApiDriver extends CsiBaseDriver {
     snapshotProperties[SNAPSHOT_CSI_SOURCE_VOLUME_ID_PROPERTY_NAME] =
       source_volume_id;
     snapshotProperties[MANAGED_PROPERTY_NAME] = "true";
-    snapshotProperties[SNAPSHOT_DELETE_POLICY_PROPERTY_NAME] = deletePolicy; // The delete policy should be independent of the snapshot
-    snapshotProperties[SNAPSHOT_HOLD_POLICY_PROPERTY_NAME] = holdPolicy;
+    snapshotProperties[SNAPSHOT_DELETE_POLICY_PROPERTY_NAME] = snapshotDeletePolicy; // The delete policy should be independent of the snapshot
+    snapshotProperties[SNAPSHOT_HOLD_POLICY_PROPERTY_NAME] = snapshotHoldPolicy;
 
     driver.ctx.logger.verbose("requested snapshot name: %s", name);
 
@@ -4805,12 +4805,12 @@ class FreeNASApiDriver extends CsiBaseDriver {
     }
 
     // hold snapshot if configured to do so
-    if (!detachedSnapshot && holdPolicy.toLowerCase() === "hold") {
+    if (!detachedSnapshot && snapshotHoldPolicy.toLowerCase() === "hold") {
       driver.ctx.logger.verbose(
-        "holding snapshot: %s (deletePolicy: %s, holdPolicy: %s)",
+        "holding snapshot: %s (snapshotDeletePolicy: %s, snapshotHoldPolicy: %s)",
         fullSnapshotName,
-        deletePolicy,
-        holdPolicy
+        snapshotDeletePolicy,
+        snapshotHoldPolicy
       );
       try {
         await httpApiClient.SnapshotHold(fullSnapshotName);
@@ -4903,9 +4903,9 @@ class FreeNASApiDriver extends CsiBaseDriver {
         throw err;
       }
     } else {
-      const deletePolicy = this.getSnapshotDeletePolicy();
+      const snapshotDeletePolicy = this.getSnapshotDeletePolicy();
       // Query the hold policy from the snapshot properties
-      let holdPolicy = this.getSnapshotHoldPolicy();
+      let snapshotHoldPolicy = this.getSnapshotHoldPolicy();
       try {
         let properties = await httpApiClient.SnapshotGet(fullSnapshotName, [
           //SNAPSHOT_DELETE_POLICY_PROPERTY_NAME, // The delete policy should be independent of the snapshot
@@ -4914,7 +4914,7 @@ class FreeNASApiDriver extends CsiBaseDriver {
         if (properties && properties[SNAPSHOT_HOLD_POLICY_PROPERTY_NAME]) {
           let holdValue = properties[SNAPSHOT_HOLD_POLICY_PROPERTY_NAME].value;
           if (holdValue && ["hold", "nohold"].includes(holdValue.toLowerCase())) {
-            holdPolicy = holdValue;
+            snapshotHoldPolicy = holdValue;
           }
         }
       } catch (err) {
@@ -4922,30 +4922,30 @@ class FreeNASApiDriver extends CsiBaseDriver {
         driver.ctx.logger.debug(
           "unable to query snapshot policies for %s, using defaults: delete=%s hold=%s",
           fullSnapshotName,
-          deletePolicy,
-          holdPolicy
+          snapshotDeletePolicy,
+          snapshotHoldPolicy
         );
       }
 
       driver.ctx.logger.verbose(
         "snapshot delete policy for %s: %s",
         fullSnapshotName,
-        deletePolicy
+        snapshotDeletePolicy
       );
       driver.ctx.logger.verbose(
         "snapshot hold policy for %s: %s",
         fullSnapshotName,
-        holdPolicy
+        snapshotHoldPolicy
       );
 
       try {
         // release the snapshot first if it is held and we plan to delete or release it
-        if (holdPolicy.toLowerCase() === "hold" && ["delete", "release"].includes(deletePolicy.toLowerCase())) {
+        if (snapshotHoldPolicy.toLowerCase() === "hold" && ["delete", "release"].includes(snapshotDeletePolicy.toLowerCase())) {
           driver.ctx.logger.verbose(
-            "releasing snapshot: %s (deletePolicy: %s, holdPolicy: %s)",
+            "releasing snapshot: %s (snapshotDeletePolicy: %s, snapshotHoldPolicy: %s)",
             fullSnapshotName,
-            deletePolicy,
-            holdPolicy
+            snapshotDeletePolicy,
+            snapshotHoldPolicy
           );
           try {
             await httpApiClient.SnapshotRelease(fullSnapshotName);
@@ -4959,12 +4959,12 @@ class FreeNASApiDriver extends CsiBaseDriver {
         }
 
         // destroy the snapshot if policy requires it
-        if (deletePolicy.toLowerCase() === "delete") {
+        if (snapshotDeletePolicy.toLowerCase() === "delete") {
           driver.ctx.logger.verbose(
-            "destroying snapshot: %s (deletePolicy: %s, holdPolicy: %s)",
+            "destroying snapshot: %s (snapshotDeletePolicy: %s, snapshotHoldPolicy: %s)",
             fullSnapshotName,
-            deletePolicy,
-            holdPolicy
+            snapshotDeletePolicy,
+            snapshotHoldPolicy
           );
           await httpApiClient.SnapshotDelete(fullSnapshotName, {
             defer: true,
@@ -4972,7 +4972,7 @@ class FreeNASApiDriver extends CsiBaseDriver {
         } else {
           driver.ctx.logger.verbose(
             "snapshot deletion skipped due to policy: %s (snapshot: %s)",
-            deletePolicy,
+            snapshotDeletePolicy,
             fullSnapshotName
           );
         }
