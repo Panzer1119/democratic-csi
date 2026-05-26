@@ -199,6 +199,22 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
     return datasetParentName;
   }
 
+  getSnapshotDeletePolicy() {
+    let snapshotDeletePolicy = this.options.zfs.snapshotDeletePolicy;
+    if (!snapshotDeletePolicy || !["delete", "release", "retain"].includes(String(snapshotDeletePolicy).toLowerCase())) {
+      snapshotDeletePolicy = "Delete";
+    }
+    return snapshotDeletePolicy;
+  }
+
+  getSnapshotHoldPolicy() {
+    let snapshotHoldPolicy = this.options.zfs.snapshotHoldPolicy;
+    if (!snapshotHoldPolicy || !["hold", "nohold"].includes(String(snapshotHoldPolicy).toLowerCase())) {
+      snapshotHoldPolicy = "NoHold";
+    }
+    return snapshotHoldPolicy;
+  }
+
   async removeSnapshotsFromDatatset(datasetName, options = {}) {
     const zb = await this.getZetabyte();
 
@@ -2182,29 +2198,8 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
       }
     } catch (e) {}
 
-    // get the snapshot delete policy
-    let deletePolicy = "Delete"; // default
-    try {
-      let tmpDeletePolicy = driver.getNormalizedParameterValue(
-        call.request.parameters,
-        "snapshotDeletePolicy"
-      );
-      if (tmpDeletePolicy && ["delete", "release", "retain"].includes(tmpDeletePolicy.toLowerCase())) {
-        deletePolicy = tmpDeletePolicy;
-      }
-    } catch (e) {}
-
-    // get the snapshot hold policy
-    let holdPolicy = "NoHold"; // default
-    try {
-      let tmpHoldPolicy = driver.getNormalizedParameterValue(
-        call.request.parameters,
-        "snapshotHoldPolicy"
-      );
-      if (tmpHoldPolicy && ["hold", "nohold"].includes(tmpHoldPolicy.toLowerCase())) {
-        holdPolicy = tmpHoldPolicy;
-      }
-    } catch (e) {}
+    const deletePolicy = this.getSnapshotDeletePolicy();
+    const holdPolicy = this.getSnapshotHoldPolicy();
 
     let response;
     const volumeParentDatasetName = this.getVolumeParentDatasetName();
@@ -2566,19 +2561,9 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
     driver.ctx.logger.verbose("deleting snapshot: %s", fullSnapshotName);
 
     if (!detachedSnapshot) {
-      // get the snapshot delete policy
-      let deletePolicy = "Delete"; // default
-      try {
-        let tmpDeletePolicy = driver.getNormalizedParameterValue(
-            call.request.parameters,
-            "snapshotDeletePolicy"
-        );
-        if (tmpDeletePolicy && ["delete", "release", "retain"].includes(tmpDeletePolicy.toLowerCase())) {
-          deletePolicy = tmpDeletePolicy;
-        }
-      } catch (e) {}
+      const deletePolicy = this.getSnapshotDeletePolicy();
       // Query the hold policy from the snapshot properties
-      let holdPolicy = "NoHold"; // default
+      let holdPolicy = this.getSnapshotHoldPolicy();
       try {
         let properties = await zb.zfs.get(fullSnapshotName, [
           //SNAPSHOT_DELETE_POLICY_PROPERTY_NAME, // The delete policy should be independent of the snapshot
