@@ -1511,6 +1511,78 @@ class Zetabyte {
             args.push(dataset);
           }
 
+           zb.exec(
+             zb.options.paths.zfs,
+             args,
+             { timeout: zb.options.timeout },
+             function (error, stdout, stderr) {
+               if (error) return reject(zb.helpers.zfsError(error, stderr));
+               return resolve(stdout);
+             }
+           );
+         });
+       },
+
+      /**
+       * zfs hold [-r] tag snapshot...
+       *
+       * @param {*} snapshot
+       * @param {*} tag
+       * @param {*} options
+       */
+      hold: function (snapshot, tag, options = {}) {
+        if (!(arguments.length >= 2)) throw Error("Invalid arguments");
+
+        return new Promise((resolve, reject) => {
+          let args = [];
+          args.push("hold");
+          if (options.recurse) args.push("-r");
+          args.push(tag);
+
+          if (Array.isArray(snapshot)) {
+            snapshot.forEach((item) => {
+              args.push(item);
+            });
+          } else {
+            args.push(snapshot);
+          }
+
+          zb.exec(
+            zb.options.paths.zfs,
+            args,
+            { timeout: zb.options.timeout },
+            function (error, stdout, stderr) {
+              if (error) return reject(zb.helpers.zfsError(error, stderr));
+              return resolve(stdout);
+            }
+          );
+        });
+      },
+
+      /**
+       * zfs release [-r] tag snapshot...
+       *
+       * @param {*} snapshot
+       * @param {*} tag
+       * @param {*} options
+       */
+      release: function (snapshot, tag, options = {}) {
+        if (!(arguments.length >= 2)) throw Error("Invalid arguments");
+
+        return new Promise((resolve, reject) => {
+          let args = [];
+          args.push("release");
+          if (options.recurse) args.push("-r");
+          args.push(tag);
+
+          if (Array.isArray(snapshot)) {
+            snapshot.forEach((item) => {
+              args.push(item);
+            });
+          } else {
+            args.push(snapshot);
+          }
+
           zb.exec(
             zb.options.paths.zfs,
             args,

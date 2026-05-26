@@ -31,6 +31,12 @@ const VOLUME_CONTEXT_PROVISIONER_DRIVER_PROPERTY_NAME =
 const VOLUME_CONTEXT_PROVISIONER_INSTANCE_ID_PROPERTY_NAME =
   "democratic-csi:volume_context_provisioner_instance_id";
 
+// snapshot policies
+const SNAPSHOT_DELETE_POLICY_PROPERTY_NAME =
+  "democratic-csi:snapshot_delete_policy"; // The delete policy should be independent of the snapshot
+const SNAPSHOT_HOLD_POLICY_PROPERTY_NAME =
+  "democratic-csi:snapshot_hold_policy";
+
 const MAX_ZVOL_NAME_LENGTH_CACHE_KEY = "controller-zfs:max_zvol_name_length";
 
 /**
@@ -2176,6 +2182,30 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
       }
     } catch (e) {}
 
+    // get the snapshot delete policy
+    let deletePolicy = "Delete"; // default
+    try {
+      let tmpDeletePolicy = driver.getNormalizedParameterValue(
+        call.request.parameters,
+        "snapshotDeletePolicy"
+      );
+      if (tmpDeletePolicy && ["delete", "release", "retain"].includes(tmpDeletePolicy.toLowerCase())) {
+        deletePolicy = tmpDeletePolicy;
+      }
+    } catch (e) {}
+
+    // get the snapshot hold policy
+    let holdPolicy = "NoHold"; // default
+    try {
+      let tmpHoldPolicy = driver.getNormalizedParameterValue(
+        call.request.parameters,
+        "snapshotHoldPolicy"
+      );
+      if (tmpHoldPolicy && ["hold", "nohold"].includes(tmpHoldPolicy.toLowerCase())) {
+        holdPolicy = tmpHoldPolicy;
+      }
+    } catch (e) {}
+
     let response;
     const volumeParentDatasetName = this.getVolumeParentDatasetName();
     let datasetParentName;
@@ -2238,6 +2268,8 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
     snapshotProperties[SNAPSHOT_CSI_SOURCE_VOLUME_ID_PROPERTY_NAME] =
       source_volume_id;
     snapshotProperties[MANAGED_PROPERTY_NAME] = "true";
+    snapshotProperties[SNAPSHOT_DELETE_POLICY_PROPERTY_NAME] = deletePolicy; // The delete policy should be independent of the snapshot
+    snapshotProperties[SNAPSHOT_HOLD_POLICY_PROPERTY_NAME] = holdPolicy;
 
     driver.ctx.logger.verbose("requested snapshot name: %s", name);
 
@@ -2419,6 +2451,7 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
         SNAPSHOT_CSI_NAME_PROPERTY_NAME,
         SNAPSHOT_CSI_SOURCE_VOLUME_ID_PROPERTY_NAME,
         MANAGED_PROPERTY_NAME,
+        SNAPSHOT_HOLD_POLICY_PROPERTY_NAME,
       ],
       { types }
     );
@@ -2444,6 +2477,26 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
     // set this just before sending out response so we know if volume completed
     // this should give us a relatively sane way to clean up artifacts over time
     await zb.zfs.set(fullSnapshotName, { [SUCCESS_PROPERTY_NAME]: "true" });
+
+    // hold snapshot if configured to do so
+    if (!detachedSnapshot && holdPolicy.toLowerCase() === "hold") {
+      driver.ctx.logger.verbose(
+        "holding snapshot: %s (deletePolicy: %s, holdPolicy: %s)",
+        fullSnapshotName,
+        deletePolicy,
+        holdPolicy
+      );
+      try {
+        await zb.zfs.hold(fullSnapshotName, "csi-hold", { recurse: false });
+      } catch (err) {
+        driver.ctx.logger.warn(
+          "failed to hold snapshot %s: %s",
+          fullSnapshotName,
+          err.toString()
+        );
+        // Don't fail the snapshot creation if hold fails
+      }
+    }
 
     return {
       snapshot: {
@@ -2512,21 +2565,120 @@ class ControllerZfsBaseDriver extends CsiBaseDriver {
 
     driver.ctx.logger.verbose("deleting snapshot: %s", fullSnapshotName);
 
-    try {
-      await zb.zfs.destroy(fullSnapshotName, {
-        recurse: true,
-        force: true,
-        defer: zb.helpers.isZfsSnapshot(snapshot_id), // only defer when snapshot
-      });
-    } catch (err) {
-      if (err.toString().includes("snapshot has dependent clones")) {
-        throw new GrpcError(
-          grpc.status.FAILED_PRECONDITION,
-          "snapshot has dependent clones"
+    if (!detachedSnapshot) {
+      // get the snapshot delete policy
+      let deletePolicy = "Delete"; // default
+      try {
+        let tmpDeletePolicy = driver.getNormalizedParameterValue(
+            call.request.parameters,
+            "snapshotDeletePolicy"
+        );
+        if (tmpDeletePolicy && ["delete", "release", "retain"].includes(tmpDeletePolicy.toLowerCase())) {
+          deletePolicy = tmpDeletePolicy;
+        }
+      } catch (e) {}
+      // Query the hold policy from the snapshot properties
+      let holdPolicy = "NoHold"; // default
+      try {
+        let properties = await zb.zfs.get(fullSnapshotName, [
+          //SNAPSHOT_DELETE_POLICY_PROPERTY_NAME, // The delete policy should be independent of the snapshot
+          SNAPSHOT_HOLD_POLICY_PROPERTY_NAME,
+        ]);
+        if (properties && properties[fullSnapshotName][SNAPSHOT_HOLD_POLICY_PROPERTY_NAME]) {
+          let holdValue = properties[fullSnapshotName][SNAPSHOT_HOLD_POLICY_PROPERTY_NAME];
+          if (holdValue && ["hold", "nohold"].includes(holdValue.value.toLowerCase())) {
+            holdPolicy = holdValue.value;
+          }
+        }
+      } catch (err) {
+        // if we can't get the property, just use the default
+        driver.ctx.logger.debug(
+          "unable to query snapshot policies for %s, using defaults: delete=%s hold=%s",
+          fullSnapshotName,
+          deletePolicy,
+          holdPolicy
         );
       }
 
-      throw err;
+      driver.ctx.logger.verbose(
+        "snapshot delete policy for %s: %s",
+        fullSnapshotName,
+        deletePolicy
+      );
+      driver.ctx.logger.verbose(
+        "snapshot hold policy for %s: %s",
+        fullSnapshotName,
+        holdPolicy
+      );
+
+      try {
+        // release the snapshot first if it is held and we plan to delete or release it
+        if (holdPolicy.toLowerCase() === "hold" && ["delete", "release"].includes(deletePolicy.toLowerCase())) {
+          driver.ctx.logger.verbose(
+            "releasing snapshot: %s (deletePolicy: %s, holdPolicy: %s)",
+            fullSnapshotName,
+            deletePolicy,
+            holdPolicy
+          );
+          try {
+            await zb.zfs.release(fullSnapshotName, "csi-hold", { recurse: false });
+          } catch (err) {
+            driver.ctx.logger.debug(
+              "failed to release snapshot %s: %s",
+              fullSnapshotName,
+              err.toString()
+            );
+            // Don't fail if release fails
+          }
+        }
+
+        // destroy the snapshot if policy requires it
+        if (deletePolicy.toLowerCase() === "delete") {
+          driver.ctx.logger.verbose(
+            "destroying snapshot: %s (deletePolicy: %s, holdPolicy: %s)",
+            fullSnapshotName,
+            deletePolicy,
+            holdPolicy
+          );
+          await zb.zfs.destroy(fullSnapshotName, {
+            recurse: true,
+            force: true,
+            defer: true,
+          });
+        } else {
+          driver.ctx.logger.verbose(
+            "snapshot deletion skipped due to policy: %s (snapshot: %s)",
+            deletePolicy,
+            fullSnapshotName
+          );
+        }
+      } catch (err) {
+        if (err.toString().includes("snapshot has dependent clones")) {
+          throw new GrpcError(
+            grpc.status.FAILED_PRECONDITION,
+            "snapshot has dependent clones"
+          );
+        }
+
+        throw err;
+      }
+    } else {
+      try {
+        await zb.zfs.destroy(fullSnapshotName, {
+          recurse: true,
+          force: true,
+          defer: zb.helpers.isZfsSnapshot(snapshot_id), // only defer when snapshot
+        });
+      } catch (err) {
+        if (err.toString().includes("snapshot has dependent clones")) {
+          throw new GrpcError(
+            grpc.status.FAILED_PRECONDITION,
+            "snapshot has dependent clones"
+          );
+        }
+
+        throw err;
+      }
     }
 
     // cleanup parent dataset if possible

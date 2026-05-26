@@ -637,6 +637,75 @@ class Api {
 
     if (
       response.statusCode == 422 &&
+      (JSON.stringify(response.body).includes("not found") ||
+        JSON.stringify(response.body).includes("not held") ||
+        JSON.stringify(response.body).includes("no holds") ||
+        JSON.stringify(response.body).includes("has no hold"))
+    ) {
+      return;
+    }
+
+    throw new Error(JSON.stringify(response.body));
+  }
+
+  async SnapshotHold(snapshotName) {
+    const httpClient = await this.getHttpClient(false);
+    const systemVersionSemver = await this.getSystemVersionSemver();
+
+    let response;
+    let endpoint;
+
+    if (semver.satisfies(systemVersionSemver, ">=25.10")) {
+      endpoint = `/pool/snapshot/hold`;
+    } else {
+      endpoint = `/zfs/snapshot/hold`;
+    }
+
+    response = await httpClient.post(endpoint, {
+      id: snapshotName,
+    });
+
+    if (response.statusCode == 200) {
+      return;
+    }
+
+    if (
+      response.statusCode == 422 &&
+      JSON.stringify(response.body).includes("already held")
+    ) {
+      return;
+    }
+
+    throw new Error(JSON.stringify(response.body));
+  }
+
+  async SnapshotRelease(snapshotName) {
+    const httpClient = await this.getHttpClient(false);
+    const systemVersionSemver = await this.getSystemVersionSemver();
+
+    let response;
+    let endpoint;
+
+    if (semver.satisfies(systemVersionSemver, ">=25.10")) {
+      endpoint = `/pool/snapshot/release`;
+    } else {
+      endpoint = `/zfs/snapshot/release`;
+    }
+
+    response = await httpClient.post(endpoint, {
+      id: snapshotName,
+    });
+
+    if (response.statusCode == 200) {
+      return;
+    }
+
+    if (response.statusCode == 404) {
+      return;
+    }
+
+    if (
+      response.statusCode == 422 &&
       JSON.stringify(response.body).includes("not found")
     ) {
       return;

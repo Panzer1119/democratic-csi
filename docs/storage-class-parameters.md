@@ -146,3 +146,38 @@ missing CHAP authentication will not be enabled (but the volume will still be cr
 enable/disable CHAP or change the password after the volume has been created.
 
 If the secret itself is referenced but not present, the volume will not be created.
+
+## `zfs`, `freenas-api`, and `freenas-ssh`
+
+The ZFS-based drivers support snapshot class parameters that control how snapshots are handled after creation and when deletion is requested.
+
+### Configure Snapshot Classes
+
+```yaml
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: zfs-snapshot
+driver: <your-zfs-driver>
+parameters:
+  # What to do when the snapshot is deleted.
+  # Supported values: Delete, Retain
+  snapshotDeletePolicy: Retain
+
+  # Whether the snapshot should be held after creation.
+  # Supported values: Hold, NoHold
+  snapshotHoldPolicy: Hold
+```
+
+#### Snapshot policy behavior
+
+- `Delete`: destroy the snapshot when deletion is requested
+- `Retain`: do not destroy the snapshot when deletion is requested
+
+The hold policy is independent from the delete policy:
+
+- `Hold`: hold the snapshot after creation
+- `NoHold`: do not hold the snapshot after creation
+
+This means you can retain a snapshot without holding it, or hold it after creation even if the delete policy is `Retain`.
+
